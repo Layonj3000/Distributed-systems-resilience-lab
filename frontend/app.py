@@ -3,14 +3,17 @@ from fastapi import Form
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-
+import os
 import requests
 
 app = FastAPI(title="Frontend")
 
 templates = Jinja2Templates(directory="templates")
 
-ORDER_SERVICE_URL = "http://localhost:8001"
+ORDER_SERVICE_URL = os.getenv(
+    "ORDER_SERVICE_URL",
+    "http://localhost:8001"
+)
 
 
 @app.get("/")
