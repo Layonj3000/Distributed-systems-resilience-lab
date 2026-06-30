@@ -1,10 +1,12 @@
-from pydantic import BaseModel
+from sqlalchemy import Column
+from sqlalchemy import Integer
+from sqlalchemy import String
+
+from database import Base
 
 
-class OrderCreate(BaseModel):
-    description: str
+class Order(Base):
+    __tablename__ = "orders"
 
-
-class Order(BaseModel):
-    id: int
-    description: str
+    id = Column(Integer, primary_key=True, index=True)
+    description = Column(String, nullable=False)

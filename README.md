@@ -31,3 +31,16 @@ Endpoints disponíveis:
 * GET /orders
 * GET /orders/{id}
 * POST /orders
+
+## Banco de Dados
+
+O serviço de pedidos utiliza PostgreSQL para persistência de dados.
+
+Tabela principal:
+
+* orders
+
+Campos:
+
+* id
+* description

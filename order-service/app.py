@@ -1,55 +1,85 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi import Depends
+from fastapi import HTTPException
 
-from models import OrderCreate, Order
+from sqlalchemy.orm import Session
+
+from database import Base
+from database import SessionLocal
+from database import engine
+
+from models import Order
+
+from schemas import OrderCreate
+from schemas import OrderResponse
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Order Service")
 
-orders: list[Order] = []
-next_id = 1
 
+def get_db():
+    db = SessionLocal()
 
-@app.get("/")
-def root():
-    return {
-        "service": "order-service",
-        "status": "running"
-    }
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @app.get("/health")
 def health():
-    return {
-        "status": "healthy"
-    }
+    return {"status": "healthy"}
 
 
-@app.get("/orders", response_model=list[Order])
-def list_orders():
-    return orders
-
-
-@app.get("/orders/{order_id}", response_model=Order)
-def get_order(order_id: int):
-    for order in orders:
-        if order.id == order_id:
-            return order
-
-    raise HTTPException(
-        status_code=404,
-        detail="Order not found"
-    )
-
-
-@app.post("/orders", response_model=Order, status_code=201)
-def create_order(order: OrderCreate):
-    global next_id
-
+@app.post(
+    "/orders",
+    response_model=OrderResponse,
+    status_code=201
+)
+def create_order(
+    order: OrderCreate,
+    db: Session = Depends(get_db)
+):
     new_order = Order(
-        id=next_id,
         description=order.description
     )
 
-    orders.append(new_order)
-    next_id += 1
+    db.add(new_order)
+    db.commit()
+    db.refresh(new_order)
 
     return new_order
+
+
+@app.get(
+    "/orders",
+    response_model=list[OrderResponse]
+)
+def list_orders(
+    db: Session = Depends(get_db)
+):
+    return db.query(Order).all()
+
+
+@app.get(
+    "/orders/{order_id}",
+    response_model=OrderResponse
+)
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db)
+):
+    order = (
+        db.query(Order)
+        .filter(Order.id == order_id)
+        .first()
+    )
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    return order
