@@ -44,3 +44,26 @@ Campos:
 
 * id
 * description
+
+## Arquitetura
+
+Frontend → Order Service → PostgreSQL
+
+### Frontend
+
+Responsável por:
+
+* Exibir pedidos
+* Criar pedidos
+* Consumir a API do Order Service
+
+### Order Service
+
+Responsável por:
+
+* Persistir pedidos
+* Expor endpoints REST
+
+### PostgreSQL
+
+Responsável pela persistência dos dados
