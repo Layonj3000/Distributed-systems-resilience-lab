@@ -1,7 +1,12 @@
+import time
+
 from fastapi import FastAPI
 from fastapi import Depends
 from fastapi import HTTPException
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from database import Base
@@ -13,9 +18,25 @@ from models import Order
 from schemas import OrderCreate
 from schemas import OrderResponse
 
-Base.metadata.create_all(bind=engine)
+
+def init_db(retries=10, delay=3):
+    for attempt in range(retries):
+        try:
+            Base.metadata.create_all(bind=engine)
+            return
+        except OperationalError:
+            time.sleep(delay)
+
+    raise RuntimeError(
+        "Database unavailable after startup retries"
+    )
+
+
+init_db()
 
 app = FastAPI(title="Order Service")
+
+Instrumentator().instrument(app).expose(app)
 
 
 def get_db():
