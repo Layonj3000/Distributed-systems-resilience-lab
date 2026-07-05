@@ -4,7 +4,7 @@ import requests
 import pybreaker
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from frontend.config import ORDER_SERVICE_URL
+from config import ORDER_SERVICE_URL  # pylint: disable=import-error
 
 breaker = pybreaker.CircuitBreaker(fail_max=5, reset_timeout=30)
 

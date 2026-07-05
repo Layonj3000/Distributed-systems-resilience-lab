@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from frontend.client import get_orders, create_order
+from client import get_orders, create_order  # pylint: disable=import-error
 
 app = FastAPI(title="Frontend")
 

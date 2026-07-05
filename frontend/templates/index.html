@@ -1,41 +1,196 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
-    <title>Orders</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciamento de Pedidos</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛒</text></svg>">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #f0f2f5;
+            color: #1a1a2e;
+            min-height: 100vh;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 680px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #1a1a2e;
+            letter-spacing: -0.5px;
+        }
+
+        header p {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        .alert {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            background: #fff1f2;
+            border: 1px solid #fecdd3;
+            border-left: 4px solid #f43f5e;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            margin-bottom: 1.5rem;
+            color: #be123c;
+            font-size: 0.9rem;
+        }
+
+        .alert::before { content: '⚠️'; }
+
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.04);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 1rem;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .form-row input {
+            flex: 1;
+            padding: 0.65rem 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color .2s, box-shadow .2s;
+            color: #1a1a2e;
+        }
+
+        .form-row input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+        }
+
+        .btn {
+            padding: 0.65rem 1.4rem;
+            background: #6366f1;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .2s, transform .1s;
+            white-space: nowrap;
+        }
+
+        .btn:hover { background: #4f46e5; }
+        .btn:active { transform: scale(.97); }
+
+        .orders-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .orders-list li {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: #f9fafb;
+            border: 1px solid #f3f4f6;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: background .15s;
+        }
+
+        .orders-list li:hover { background: #f0f2f5; }
+
+        .order-id {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #6366f1;
+            background: #eef2ff;
+            padding: 0.2rem 0.55rem;
+            border-radius: 999px;
+            min-width: 2rem;
+            text-align: center;
+        }
+
+        .empty {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 0.9rem;
+            padding: 1.5rem 0 0.5rem;
+        }
+
+        .empty::before { content: '📭 '; }
+    </style>
 </head>
 <body>
+    <div class="container">
+        <header>
+            <h1>Gerenciamento de Pedidos</h1>
+            <p>Crie e acompanhe seus pedidos em tempo real</p>
+        </header>
 
-<h1>Order Management</h1>
+        {% if service_unavailable %}
+        <div class="alert">Serviço de pedidos temporariamente indisponível.</div>
+        {% endif %}
 
-{% if service_unavailable %}
-<p style="color:red;">
-    Order service temporarily unavailable.
-</p>
-{% endif %}
+        <div class="card">
+            <h2>Novo Pedido</h2>
+            <form action="/create" method="post">
+                <div class="form-row">
+                    <input
+                        type="text"
+                        name="description"
+                        placeholder="Descrição do pedido"
+                        required
+                        autocomplete="off"
+                    >
+                    <button type="submit" class="btn">Criar</button>
+                </div>
+            </form>
+        </div>
 
-<form action="/create" method="post">
-    <input
-        type="text"
-        name="description"
-        placeholder="Order description"
-        required
-    >
-    <button type="submit">
-        Create
-    </button>
-</form>
-
-<hr>
-
-<h2>Orders</h2>
-
-<ul>
-{% for order in orders %}
-    <li>
-        {{ order.id }} - {{ order.description }}
-    </li>
-{% endfor %}
-</ul>
-
+        <div class="card">
+            <h2>Pedidos</h2>
+            {% if orders %}
+            <ul class="orders-list">
+                {% for order in orders %}
+                <li>
+                    <span class="order-id">#{{ order.id }}</span>
+                    {{ order.description }}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="empty">Nenhum pedido encontrado.</p>
+            {% endif %}
+        </div>
+    </div>
 </body>
 </html>
