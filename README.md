@@ -1,69 +1,219 @@
-# Resilience Lab
+# 🧪 Resilience Lab
 
-## Objetivo
+Aplicação distribuída para estudo de resiliência com Kubernetes e Chaos Mesh.
 
-Avaliar a resiliência de uma aplicação distribuída utilizando Kubernetes e Chaos Mesh.
+## 🏗️ Arquitetura
 
-## Arquitetura
+```
+Frontend (porta 30080) → Order Service (porta 8001) → PostgreSQL (porta 5432)
+```
 
-* Frontend/API Gateway
-* Order Service
-* PostgreSQL
+| Componente    | Tecnologia       | Réplicas |
+|---------------|------------------|----------|
+| Frontend      | FastAPI + Jinja2 | 2        |
+| Order Service | FastAPI          | 2 (HPA)  |
+| PostgreSQL    | PostgreSQL 17    | 1        |
+| Prometheus    | prom/prometheus  | 1        |
+| Grafana       | grafana/grafana  | 1        |
 
-## Tecnologias
+## 📋 Pré-requisitos
 
-* Python
-* FastAPI
-* PostgreSQL
-* Docker
-* Kubernetes
-* Chaos Mesh
-* Prometheus
-* Grafana
+- [Docker](https://docs.docker.com/get-docker/)
+- [Minikube](https://minikube.sigs.k8s.io/docs/start/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Helm](https://helm.sh/docs/intro/install/)
 
-## Serviços
+## 🐳 Execução local (Docker Compose)
 
-### Order Service
+Útil para desenvolvimento rápido, sem Kubernetes.
 
-Endpoints disponíveis:
+```bash
+docker compose up --build
+```
 
-* GET /health
-* GET /orders
-* GET /orders/{id}
-* POST /orders
+Acesse em: http://localhost:8000
 
-## Banco de Dados
+## ☸️ Execução no Kubernetes (Minikube)
 
-O serviço de pedidos utiliza PostgreSQL para persistência de dados.
+### 1. Iniciar o Minikube
 
-Tabela principal:
+```bash
+minikube start
+minikube addons enable metrics-server
+```
 
-* orders
+### 2. Apontar o Docker para o Minikube
 
-Campos:
+```bash
+# PowerShell
+minikube docker-env | Invoke-Expression
 
-* id
-* description
+# Bash/Linux
+eval $(minikube docker-env)
+```
 
-## Arquitetura
+> 💡 Este passo deve ser repetido a cada novo terminal.
 
-Frontend → Order Service → PostgreSQL
+### 3. Build das imagens
 
-### Frontend
+```bash
+docker build -t distributed-systems-resilience-lab-frontend:latest ./frontend
+docker build -t distributed-systems-resilience-lab-order-service:latest ./order-service
+```
 
-Responsável por:
+### 4. Deploy da aplicação
 
-* Exibir pedidos
-* Criar pedidos
-* Consumir a API do Order Service
+```bash
+kubectl apply -f k8s/postgres.yaml
+kubectl apply -f k8s/order-service.yaml
+kubectl apply -f k8s/order-service-hpa.yaml
+kubectl apply -f k8s/frontend.yaml
+```
 
-### Order Service
+### 5. Deploy da observabilidade
 
-Responsável por:
+```bash
+kubectl apply -f k8s/prometheus.yaml
+kubectl apply -f k8s/grafana.yaml
+```
 
-* Persistir pedidos
-* Expor endpoints REST
+### 6. Verificar os pods
 
-### PostgreSQL
+```bash
+kubectl get pods
+```
 
-Responsável pela persistência dos dados
+⚠️ Aguarde todos os pods estarem com status `Running`.
+
+### 7. Acessar os serviços
+
+```bash
+# Frontend
+minikube service frontend
+
+# Grafana (usuário: admin / senha: admin)
+minikube service grafana
+```
+
+## 🔄 Atualizar após mudanças no código
+
+```bash
+minikube docker-env | Invoke-Expression
+
+docker build -t distributed-systems-resilience-lab-frontend:latest ./frontend
+docker build -t distributed-systems-resilience-lab-order-service:latest ./order-service
+
+kubectl rollout restart deployment/frontend
+kubectl rollout restart deployment/order-service
+```
+
+## ⚙️ Instalar o Chaos Mesh
+
+```bash
+helm repo add chaos-mesh https://charts.chaos-mesh.org
+helm repo update
+
+helm install chaos-mesh chaos-mesh/chaos-mesh \
+  --namespace chaos-mesh \
+  --create-namespace \
+  --set chaosDaemon.runtime=containerd \
+  --set chaosDaemon.socketPath=/run/containerd/containerd.sock
+```
+
+Verificar instalação:
+
+```bash
+kubectl get pods -n chaos-mesh
+```
+
+## 🧪 Experimentos de Caos
+
+### 1. Falha de Rede — latência de 1000ms no Order Service
+
+```bash
+kubectl apply -f chaos/network-chaos.yaml
+```
+
+### 2. Falha de Instância — kill de pod do Order Service
+
+```bash
+kubectl apply -f chaos/pod-chaos.yaml
+```
+
+### 3. Falha de Recurso — sobrecarga de CPU no Order Service
+
+```bash
+kubectl apply -f chaos/stress-chaos.yaml
+```
+
+### Remover experimentos
+
+```bash
+kubectl delete -f chaos/network-chaos.yaml
+kubectl delete -f chaos/pod-chaos.yaml
+kubectl delete -f chaos/stress-chaos.yaml
+```
+
+## 🛡️ Mecanismos de Tolerância a Falhas
+
+| Mecanismo      | Onde             | Configuração                          |
+|----------------|------------------|---------------------------------------|
+| Circuit Breaker | Frontend        | 5 falhas → abre por 30s               |
+| Retry          | Frontend         | 3 tentativas com intervalo de 1s      |
+| Timeout        | Frontend         | 3s por requisição                     |
+| Réplicas       | Frontend / Order Service | 2 réplicas cada               |
+| HPA            | Order Service    | 2–5 réplicas, escala em 60% de CPU    |
+
+## 🔬 Observabilidade
+
+| Serviço    | URL local                  | Credenciais     |
+|------------|----------------------------|-----------------|
+| Prometheus | `minikube service prometheus` | —            |
+| Grafana    | `minikube service grafana`    | admin / admin |
+
+O dashboard **Resilience Lab** é provisionado automaticamente no Grafana com os painéis:
+
+- Latência p95 do Order Service
+- Taxa de requisições (req/s)
+- Taxa de erros 5xx
+- CPU por pod
+- Réplicas ativas
+
+## 📁 Estrutura do Projeto
+
+```
+.
+├── chaos/                  # Manifestos do Chaos Mesh
+│   ├── network-chaos.yaml
+│   ├── pod-chaos.yaml
+│   └── stress-chaos.yaml
+├── frontend/               # Serviço de frontend
+│   ├── templates/
+│   ├── app.py
+│   ├── client.py
+│   ├── config.py
+│   └── Dockerfile
+├── order-service/          # Serviço de pedidos
+│   ├── app.py
+│   ├── database.py
+│   ├── models.py
+│   ├── schemas.py
+│   └── Dockerfile
+├── k8s/                    # Manifestos do Kubernetes
+│   ├── frontend.yaml
+│   ├── order-service.yaml
+│   ├── order-service-hpa.yaml
+│   ├── postgres.yaml
+│   ├── prometheus.yaml
+│   └── grafana.yaml
+└── docker-compose.yml      # Execução local
+```
+## 👨‍💻 Autores 
+<div>
+  <table style="margin: 0 auto;">
+    <tr>
+      <td><a href="https://github.com/DavidPotentini"><img loading="lazy" src="https://avatars.githubusercontent.com/u/106561154?v=4" width="115"><br><sub>David Potentini</sub></a></td>
+      <td><a href="https://github.com/Layonj300"><img loading="lazy" src="https://avatars.githubusercontent.com/u/106559843?v=4" width="115"><br><sub>Layon Reis</sub></a></td>
+    </tr>
+  </table>
+</div>
