@@ -11,3 +11,4 @@ class Order(Base):  # pylint: disable=too-few-public-methods
 
     id = Column(Integer, primary_key=True, index=True)
     description = Column(String, nullable=False)
+    idempotency_key = Column(String, unique=True, index=True, nullable=False)

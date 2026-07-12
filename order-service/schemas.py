@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class OrderCreate(BaseModel):
     """Schema para criação de pedido."""
     description: str
+    idempotency_key: str
 
 
 class OrderResponse(BaseModel):
