@@ -37,31 +37,25 @@ Acesse em: http://localhost:8000
 
 ### 1. Iniciar o Minikube
 
+O runtime `containerd` é **obrigatório** — o driver docker com Docker 29+ é
+incompatível com o chaos-daemon do Chaos Mesh.
+
 ```bash
-minikube start
+minikube start --driver=docker --container-runtime=containerd --cpus=4 --memory=6g
 minikube addons enable metrics-server
 ```
 
-### 2. Apontar o Docker para o Minikube
+### 2. Build das imagens
+
+Com o runtime `containerd`, use `minikube image build` (o `minikube docker-env` **não**
+funciona nesse runtime):
 
 ```bash
-# PowerShell
-minikube docker-env | Invoke-Expression
-
-# Bash/Linux
-eval $(minikube docker-env)
+minikube image build -t distributed-systems-resilience-lab-frontend:latest ./frontend
+minikube image build -t distributed-systems-resilience-lab-order-service:latest ./order-service
 ```
 
-> 💡 Este passo deve ser repetido a cada novo terminal.
-
-### 3. Build das imagens
-
-```bash
-docker build -t distributed-systems-resilience-lab-frontend:latest ./frontend
-docker build -t distributed-systems-resilience-lab-order-service:latest ./order-service
-```
-
-### 4. Deploy da aplicação
+### 3. Deploy da aplicação
 
 ```bash
 kubectl apply -f k8s/postgres.yaml
@@ -70,22 +64,24 @@ kubectl apply -f k8s/order-service-hpa.yaml
 kubectl apply -f k8s/frontend.yaml
 ```
 
-### 5. Deploy da observabilidade
+### 4. Deploy da observabilidade
 
 ```bash
 kubectl apply -f k8s/prometheus.yaml
 kubectl apply -f k8s/grafana.yaml
 ```
 
-### 6. Verificar os pods
+### 5. Verificar os pods
 
 ```bash
 kubectl get pods
 ```
 
-⚠️ Aguarde todos os pods estarem com status `Running`.
+⚠️ Aguarde todos os pods estarem com status `Running`. Os pods do `order-service`
+levam ~25s a mais para iniciar por causa do `initContainer` de warm-up (usado para
+tornar a queda de réplicas do PodChaos visível no Grafana).
 
-### 7. Acessar os serviços
+### 6. Acessar os serviços
 
 ```bash
 # Frontend
@@ -98,10 +94,8 @@ minikube service grafana
 ## 🔄 Atualizar após mudanças no código
 
 ```bash
-minikube docker-env | Invoke-Expression
-
-docker build -t distributed-systems-resilience-lab-frontend:latest ./frontend
-docker build -t distributed-systems-resilience-lab-order-service:latest ./order-service
+minikube image build -t distributed-systems-resilience-lab-frontend:latest ./frontend
+minikube image build -t distributed-systems-resilience-lab-order-service:latest ./order-service
 
 kubectl rollout restart deployment/frontend
 kubectl rollout restart deployment/order-service
@@ -117,7 +111,9 @@ helm install chaos-mesh chaos-mesh/chaos-mesh \
   --namespace chaos-mesh \
   --create-namespace \
   --set chaosDaemon.runtime=containerd \
-  --set chaosDaemon.socketPath=/run/containerd/containerd.sock
+  --set chaosDaemon.socketPath=/run/containerd/containerd.sock \
+  --set controllerManager.replicaCount=1 \
+  --version 2.6.3
 ```
 
 Verificar instalação:
@@ -128,13 +124,22 @@ kubectl get pods -n chaos-mesh
 
 ## 🧪 Experimentos de Caos
 
-### 1. Falha de Rede — latência de 1000ms no Order Service
+> **Antes do NetworkChaos** — carregue os módulos de kernel do netem no host (o driver
+> docker compartilha o kernel; `modprobe` não sobrevive a reboot, refaça a cada sessão):
+>
+> ```bash
+> sudo modprobe sch_netem ip_set ip_set_hash_net ip_set_hash_ip xt_set
+> ```
+>
+> Roteiro detalhado de cada experimento (matriz do relatório) em [`chaos/README.md`](chaos/README.md).
+
+### 1. Falha de Rede — latência de 2000ms no Order Service
 
 ```bash
 kubectl apply -f chaos/network-chaos.yaml
 ```
 
-### 2. Falha de Instância — kill de pod do Order Service
+### 2. Falha de Instância — kill de uma réplica do Order Service (`mode: one`)
 
 ```bash
 kubectl apply -f chaos/pod-chaos.yaml
@@ -160,6 +165,7 @@ kubectl delete -f chaos/stress-chaos.yaml
 |----------------|------------------|---------------------------------------|
 | Circuit Breaker | Frontend        | 5 falhas → abre por 30s               |
 | Retry          | Frontend         | 3 tentativas com intervalo de 1s      |
+| Idempotência   | Frontend + Order Service | chave única por pedido; o retry de escrita não duplica |
 | Timeout        | Frontend         | 3s por requisição                     |
 | Réplicas       | Frontend / Order Service | 2 réplicas cada               |
 | HPA            | Order Service    | 2–5 réplicas, escala em 60% de CPU    |
@@ -175,7 +181,6 @@ O dashboard **Resilience Lab** é provisionado automaticamente no Grafana com os
 
 - Latência p95 do Order Service
 - Taxa de requisições (req/s)
-- Taxa de erros 5xx
 - CPU por pod
 - Réplicas ativas
 

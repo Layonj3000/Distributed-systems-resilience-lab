@@ -19,30 +19,47 @@ Todos os experimentos têm como alvo os pods do `order-service`
 
 | Arquivo | Tipo | Categoria (spec 2.2) | Efeito |
 |---|---|---|---|
-| `network-chaos.yaml` | NetworkChaos | Falha de Rede | Latência de 1000ms por 60s |
-| `pod-chaos.yaml` | PodChaos | Falha de Instância | `pod-kill` de uma réplica |
+| `network-chaos.yaml` | NetworkChaos | Falha de Rede | Latência de 2000ms por 60s (round-trip compõe além do timeout de 3s) |
+| `pod-chaos.yaml` | PodChaos | Falha de Instância | `pod-kill` de uma réplica (`mode: one`) |
 | `stress-chaos.yaml` | StressChaos | Falha de Recurso | CPU 2 workers a 100% por 120s |
 
 ---
 
-## Pré-requisitos do ambiente
+## A. Dependências — instalar uma vez na máquina
 
-Cluster com runtime **containerd** (o driver docker com Docker 29+ é incompatível
-com o chaos-daemon) e recursos suficientes:
+Softwares que precisam existir no host **antes de qualquer coisa**. Instala uma
+vez; sobrevivem a reboots e a recriações do cluster.
+
+| Dependência | Para que serve | Verificar |
+|---|---|---|
+| **Docker** | Driver do minikube | `docker version` |
+| **minikube** | Cluster Kubernetes local | `minikube version` |
+| **kubectl** | Cliente do Kubernetes | `kubectl version --client` |
+| **Helm** | Instala o Chaos Mesh | `helm version` |
+
+Registre o repositório Helm do Chaos Mesh (uma vez só):
+
+```bash
+helm repo add chaos-mesh https://charts.chaos-mesh.org
+helm repo update
+```
+
+---
+
+## B. Preparação do ambiente — uma vez por cluster
+
+Comandos de configuração que **persistem enquanto o cluster existir**. Só precisa
+repetir se você apagar o cluster (`minikube delete`) e criar de novo.
+
+**1. Subir o cluster** (runtime `containerd`; o driver docker com Docker 29+ é
+incompatível com o chaos-daemon):
 
 ```bash
 minikube start --driver=docker --container-runtime=containerd --cpus=4 --memory=6g
 minikube addons enable metrics-server
 ```
 
-Módulos de kernel para o NetworkChaos (o driver docker compartilha o kernel do
-host):
-
-```bash
-sudo modprobe sch_netem ip_set ip_set_hash_net ip_set_hash_ip xt_set
-```
-
-Chaos Mesh (1 réplica do controller já basta para o laboratório):
+**2. Instalar o Chaos Mesh** (1 réplica do controller basta para o laboratório):
 
 ```bash
 helm install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace \
@@ -52,19 +69,47 @@ helm install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace \
   --version 2.6.3
 ```
 
-Observabilidade (Prometheus + Grafana) — manifestos em `../k8s/`:
+**3. Subir a aplicação e a observabilidade** (Prometheus + Grafana em `../k8s/`):
 
 ```bash
+kubectl apply -f ../k8s/            # deployments, services, hpa da aplicação
 kubectl apply -f ../k8s/prometheus.yaml
 kubectl apply -f ../k8s/grafana.yaml
 ```
 
-Verificação geral:
+---
+
+## C. Antes de cada sessão de teste — toda vez
+
+Passos rápidos que **não persistem** e precisam ser refeitos a cada vez que você
+liga a máquina / retoma os testes.
+
+**1. Módulos de kernel do NetworkChaos** (necessários só para o experimento de
+rede; o driver docker compartilha o kernel do host, e `modprobe` manual **não
+sobrevive a reboot**):
+
+```bash
+sudo modprobe sch_netem ip_set ip_set_hash_net ip_set_hash_ip xt_set
+lsmod | grep -E 'sch_netem|ip_set|xt_set'          # confirma que carregaram
+```
+
+> Se a máquina não foi reiniciada desde a última sessão, eles já estão na memória
+> e este passo pode ser pulado. Para carregar automaticamente em todo boot, veja
+> "Tornar os módulos permanentes" no fim do documento.
+
+**2. Se o cluster foi desligado** (`minikube stop` ou a máquina reiniciou), religue
+sem recriar — tudo do bloco B continua lá:
+
+```bash
+minikube start                                     # reusa o cluster existente
+```
+
+**3. Verificar que está tudo de pé:**
 
 ```bash
 kubectl get pods                                   # app, prometheus, grafana Running
 kubectl get pods -n chaos-mesh                     # chaos-mesh Running
-kubectl get crd | grep chaos-mesh.org             # networkchaos/podchaos/stresschaos
+kubectl get crd | grep chaos-mesh.org              # networkchaos/podchaos/stresschaos
 ```
 
 ---
@@ -84,7 +129,6 @@ Painéis disponíveis:
 |---|---|
 | Latência p95 | NetworkChaos |
 | Taxa de requisições (req/s) | atividade/carga |
-| Taxa de erros 5xx | PodChaos |
 | CPU por pod | StressChaos |
 | Réplicas ativas | PodChaos e StressChaos (HPA) |
 
@@ -107,75 +151,98 @@ while true; do curl -s -o /dev/null http://localhost:8001/orders; sleep 0.2; don
 
 ## 1. NetworkChaos — Falha de Rede
 
-- **Estado Estável:** latência p95 no painel do Grafana em ~10ms; requisição
-  pod-a-pod em ~0.01s.
-- **Hipótese:** a latência de 1000ms deixa o serviço lento, mas o timeout de 3s e
-  o retry do frontend mantêm as respostas (HTTP 200); não há queda.
-- **Configuração do Ataque:** `delay latency=1000ms jitter=100ms`, `duration=60s`.
+- **Estado Estável:** painel **Latência p95** em ~10ms; o frontend responde de
+  imediato (HTTP 200); requisição pod-a-pod ao `order-service` em ~0.01s.
+- **Hipótese:** cada perna do atraso (2s) fica abaixo do timeout de 3s do
+  `frontend/client.py`, mas o efeito se **compõe** a cada round-trip (handshake +
+  requisição + resposta ≈ 4× → ~8s no cliente), ultrapassando o timeout em toda
+  requisição. O frontend degrada de forma graciosa (retry esgota → circuit breaker
+  abre → mensagem de indisponível) sem quebrar a interface e sem duplicar pedidos.
+- **Configuração do Ataque:** `delay latency=2000ms jitter=100ms`, `mode=all`,
+  `duration=60s`.
 
 **Demonstração visual:**
 
-1. No Grafana, deixe o painel **Latência p95** à vista.
+1. Deixe à vista o painel **Latência p95** e o frontend no navegador (F12 → Network).
 2. Injete o ataque (sempre delete-e-aplique para forçar injeção nova):
    ```bash
    kubectl delete -f network-chaos.yaml --ignore-not-found
    kubectl apply  -f network-chaos.yaml
    ```
-3. Observe o painel **Latência p95** disparar de ~10ms para segundos.
-4. No navegador, recarregue a página (F5): com F12 → Network, o tempo de carga
-   sobe visivelmente. (Para o efeito dramático de "serviço indisponível" na tela,
-   use `latency: "5000ms"`, acima do timeout de 3s → aparece o texto vermelho.)
+3. Observe o painel **Latência p95** subir de ~10ms para ~8s. No navegador,
+   recarregue a página: aparece o texto vermelho **"Serviço temporariamente
+   indisponível"** (o atraso composto estoura o timeout de 3s).
 
-**Verificação por terminal:**
+**Verificação por terminal** (mede a latência client-side, ainda maior que o p95
+server-side):
 
 ```bash
 kubectl describe networkchaos network-delay-order-service | grep -A6 "Status:"   # AllInjected: True
 kubectl exec deploy/frontend -- python -c "import time,requests; t=time.time(); requests.get('http://order-service:8001/orders'); print(round(time.time()-t,3),'s')"
 ```
 
-- **Resultado Observado:** latência p95 salta para alguns segundos, mantendo HTTP
-  200. Print do painel antes/durante.
+O comando demora ~8s — o atraso de 2s se compõe a cada round-trip, bem acima do
+timeout de 3s que o frontend se recusa a esperar.
+
+- **Resultado Observado:** p95 sobe para ~2s; o frontend degrada com mensagem de
+  indisponível, sem quebrar a interface e sem criar/duplicar pedidos.
 - **Ações Corretivas:** timeout de 3s + retry (tenacity) + circuit breaker
-  (pybreaker) no `frontend/client.py`.
+  (pybreaker) no `frontend/client.py`; e **chave de idempotência** (`idempotency_key`)
+  para que o retry de escrita não gere pedidos duplicados (`frontend/client.py` +
+  `order-service`).
 
 ```bash
-kubectl delete -f network-chaos.yaml
+kubectl delete -f network-chaos.yaml --ignore-not-found
 ```
 
 ---
 
 ## 2. PodChaos — Falha de Instância
 
-- **Estado Estável:** painel **Réplicas ativas** = 2; **Taxa de erros 5xx** = 0.
-- **Hipótese:** ao matar 1 réplica, o Service redireciona para a réplica viva e o
-  Deployment recria o pod; disponibilidade mantida (impacto quase invisível).
-- **Configuração do Ataque:** `action=pod-kill`, `mode=one`, `gracePeriod=0`.
+- **Estado Estável:** painel **Réplicas ativas** = 2.
+- **Hipótese:** ao matar **uma** das réplicas, a outra continua atendendo
+  (redundância), então **não há impacto para o usuário**; o Kubernetes recria a
+  réplica morta (self-healing) e o serviço volta a 2 réplicas sozinho.
+- **Configuração do Ataque:** `action=pod-kill`, `mode=one`.
+
+> `pod-kill` é instantâneo e o Kubernetes recria o pod em poucos segundos — janela
+> menor que o intervalo de coleta (5s), que o gráfico não registraria. Um
+> `initContainer` `slow-start` (`sleep 25`) no Deployment do `order-service`
+> (`k8s/order-service.yaml`) simula um warm-up lento: o pod é recriado na hora, mas
+> só passa a servir na `:8001` após ~25s — alargando a janela o suficiente para a
+> queda de 2 → 1 aparecer no painel. A volta a 2 continua sendo **self-healing real**
+> (pod novo, `AGE` resetado).
+
+> Deixe o **gerador de carga** rodando (seção "Acesso às telas") para comprovar que o
+> serviço continua respondendo durante todo o ataque.
 
 **Demonstração visual:**
 
-1. No Grafana, deixe à vista os painéis **Réplicas ativas** e **Taxa de erros 5xx**.
+1. No Grafana, deixe à vista o painel **Réplicas ativas**.
 2. Injete o ataque (sempre delete-e-aplique para forçar injeção nova):
    ```bash
    kubectl delete -f pod-chaos.yaml --ignore-not-found
    kubectl apply  -f pod-chaos.yaml
    ```
-3. Observe **Réplicas ativas** cair para 1 e voltar a 2 em segundos (o pod é
-   recriado). A **Taxa de requisições** segue fluindo — o serviço não parou.
-4. No navegador: recarregue a página — ela continua respondendo normalmente
-   (prova da redundância). Para mostrar impacto visível na tela, edite
-   `pod-chaos.yaml` com `mode: all` (mata as 2 réplicas) → aparece o texto
-   vermelho de indisponibilidade até o Kubernetes recriar os pods.
+3. Observe **Réplicas ativas** cair de 2 para **1** e permanecer assim por ~25s (o
+   warm-up do pod recriado), voltando a 2 sozinha.
+4. No navegador: recarregue a página durante a janela — ela **continua funcionando
+   normalmente** (a réplica sobrevivente atende; o retry cobre qualquer requisição
+   que tenha caído no pod morto). É a prova de disponibilidade por redundância.
 
 **Verificação por terminal:**
 
 ```bash
-kubectl get pods -l app=order-service -w    # pod Terminating -> novo Running
+kubectl describe podchaos pod-kill-order-service | grep -A6 "Status:"   # AllInjected: True
+kubectl get pods -l app=order-service -w    # um pod com AGE resetado (self-healing)
 ```
 
-- **Resultado Observado:** um pod morre e outro nasce em poucos segundos;
-  disponibilidade mantida com `mode: one`. Print do painel **Réplicas ativas**.
-- **Ações Corretivas:** `replicas: 2` no Deployment + recriação automática do
-  Kubernetes.
+- **Resultado Observado:** uma réplica é morta e recriada; painel cai de 2 para 1 por
+  ~25s, **sem indisponibilidade** (a outra réplica segue atendendo); recuperação
+  automática a 2 ao fim do warm-up. Print do painel **Réplicas ativas**.
+- **Ações Corretivas:** `replicas: 2` (redundância) + auto-recuperação do Kubernetes
+  (self-healing); o retry no `frontend/client.py` absorve as requisições que
+  atingiram o pod morto durante a transição.
 
 ```bash
 kubectl delete -f pod-chaos.yaml
@@ -244,3 +311,4 @@ kubectl patch <kind> <nome> --type=merge -p '{"metadata":{"finalizers":[]}}'
   ao mesmo tempo.
 - Meça a latência do NetworkChaos por dentro do cluster (`kubectl exec`), nunca via
   `port-forward` do host — o port-forward mascara o atraso.
+
