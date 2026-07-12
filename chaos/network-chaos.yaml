@@ -16,7 +16,7 @@ spec:
       app: order-service
 
   delay:
-    latency: "1000ms"
+    latency: "2000ms"
     correlation: "50"
     jitter: "100ms"
 
